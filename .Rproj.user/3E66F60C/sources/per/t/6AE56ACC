@@ -1,0 +1,26 @@
+{
+    "id": "6AE56ACC",
+    "path": "~/code/fca/price_nav/load_all_data.R",
+    "project_path": "load_all_data.R",
+    "type": "r_source",
+    "hash": "198127260",
+    "contents": "",
+    "dirty": false,
+    "created": 1709640208560.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "212,0",
+        "scrollLine": "166"
+    },
+    "folds": "0|26|6|0|\n9|41|50|0|\n52|85|154|0|\n58|20|62|2|\n156|36|160|0|\n",
+    "lastKnownWriteTime": 1709648266,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1709648266928,
+    "read_only": false,
+    "read_only_alternatives": []
+}
