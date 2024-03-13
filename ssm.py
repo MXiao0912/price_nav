@@ -9,6 +9,7 @@ from sklearn.exceptions import ConvergenceWarning
 from statsmodels.tsa.arima.model import ARIMA
 from pmdarima.arima import ADFTest
 from pmdarima.arima import auto_arima
+from statsmodels.graphics.tsaplots import plot_acf
 
 px_nav = pd.read_csv("px_nav.csv")
 px_nav = px_nav.sort_values("date")
@@ -18,215 +19,70 @@ px_nav["nav"] = np.log(px_nav["nav"])
 # px_nav = na.omit(px_nav)
 
 
-
-class SSM(sm.tsa.statespace.MLEModel):
+# class SSM_vec(sm.tsa.statespace.MLEModel):
     
 
-    # If you use _param_names and _start_params then the model
-    # will automatically pick them up
-    _param_names = ['psi', 'phi', 'sigma2_r', 'sigma2_e', 'sigma2_w',
-                       "intercept_obs_1", "intercept_obs_2", "intercept_state_1", "covid"]
-    # _start_params = [-0.33, -0.44, 0.1, 1, 1, 0, 0, 0, 0, -1]
+#     # If you use _param_names and _start_params then the model
+#     # will automatically pick them up
+#     _param_names = ['psi', 'phi', 'sigma2_r', 'sigma2_e', 'sigma2_w', 'obs_cov',
+#                        "intercept_obs_1", "intercept_obs_2", "intercept_state_1"]
+#     _start_params = [0.5*np.eye(137), 0.5*np.eye(137), 0.1*np.eye(), 1, 1, 0, 0, 0, 0]
 
-    def __init__(self, endog, params0):
-        # Extract lagged endog
-        X = sm.tsa.lagmat(endog, maxlag=1, trim='both', original='in')
-        self.ind_all = endog.index[1:]
-        endog = X[:, :2]
-        self.lagged_endog = X[:, 2:]
-        self._start_params = params0
+#     def __init__(self, endog):
+#         # Extract lagged endog
+#         X = sm.tsa.lagmat(endog, maxlag=1, trim='both', original='in')
+#         self.ind_all = endog.index[1:]
+#         endog = X[:, :2]
+#         self.lagged_endog = X[:, 2:]
 
-        # Initialize the state space model
-        # Note: because your state process is nonstationary,
-        # you can't use stationary initialization
-        super().__init__(endog, k_states=2, k_posdef=1,
-                         initialization='diffuse')
+#         # Initialize the state space model
+#         # Note: because your state process is nonstationary,
+#         # you can't use stationary initialization
+#         super().__init__(endog, k_states=2, k_posdef=1,
+#                          initialization='diffuse')
 
-        # Setup the fixed components of the state space representation
-        self['design'] = [[1., 1.],
-                          [1., 0]]
-        self['transition'] = [[1., 0],
-                              [1., 0]]
-        self['selection'] = [[1],
-                             [0]]
+#         # Setup the fixed components of the state space representation
+#         self['design'] = [[1., 1.],
+#                           [1., 0]]
+#         self['transition'] = [[1., 0],
+#                               [1., 0]]
+#         self['selection'] = [[1],
+#                              [0]]
 
-    # For the parameter estimation part, it is
-    # helpful to use parameter transformations to
-    # keep the parameters in the valid domain. Here
-    # I assumed that you wanted phi and psi to be
-    # between (-1, 1).
+#     # For the parameter estimation part, it is
+#     # helpful to use parameter transformations to
+#     # keep the parameters in the valid domain. Here
+#     # I assumed that you wanted phi and psi to be
+#     # between (-1, 1).
         
-    def transform_params(self, params):
-        params = params.copy()
-        for i in range(2):
-            params[i:i + 1] = tools.constrain_stationary_univariate(params[i:i + 1])
-        params[2:5] = params[2:5]**2
-        return params
+#     def transform_params(self, params):
+#         params = params.copy()
+#         for i in range(2):
+#             params[i:i + 1] = tools.constrain_stationary_univariate(params[i:i + 1])
+#         params[2:] = params[2:]**2
+#         return params
     
-    def untransform_params(self, params):
-        params = params.copy()
-        for i in range(2):
-            params[i:i + 1] = tools.unconstrain_stationary_univariate(params[i:i + 1])
-        params[2:5] = params[2:5]**0.5
-        return params
+#     def untransform_params(self, params):
+#         params = params.copy()
+#         for i in range(2):
+#             params[i:i + 1] = tools.unconstrain_stationary_univariate(params[i:i + 1])
+#         params[2:] = params[2:]**0.5
+#         return params
 
-    # Describe how parameters enter the model
-    def update(self, params, **kwargs):
-        params = super().update(params, **kwargs)
+#     # Describe how parameters enter the model
+#     def update(self, params, **kwargs):
+#         params = super().update(params, **kwargs)
 
-        # Here is where we're putting the lagged endog, multiplied
-        # by phi and psi into the intercept term
-        # self['obs_intercept'] = self.lagged_endog.T * params[:2, None]
-        self['obs_intercept'] = self.lagged_endog.T * params[:2, None]+ np.tile([[params[5]],[params[6]]],self.lagged_endog.shape[0])
-        self['state_intercept'] = np.tile([[params[7]],[0]],self.lagged_endog.shape[0])
-        self['state_intercept'] = self['state_intercept'] + np.array([[params[8], 0], [0, 0]]) @ np.tile((self.ind_all.month == 3) & (self.ind_all.year == 2020), 2).reshape(2, -1).astype(int)
-        self['design', 0, 1] = -params[0]
-        self['design', 1, 0] = 1 - params[1]
-        self['state_cov', 0, 0] = params[2]
-        self['obs_cov'] = np.diag([params[3],params[4]])
-
-
-class SSM_two_lags(sm.tsa.statespace.MLEModel):
-    
-
-    # If you use _param_names and _start_params then the model
-    # will automatically pick them up
-    _param_names = ['psi_1', 'psi_2', 'phi_1', 'phi_2', 'sigma2_r', 'sigma2_e', 'sigma2_w', 
-    "intercept_obs_1", "intercept_obs_2", "intercept_state_1", "covid"]
-    # _start_params = [0.5, 0.5, 0.5, 0.5, 0.1, 1, 1, 0, 0, 0]
-
-    def __init__(self, endog, params0):
-        # Extract lagged endog
-        X = sm.tsa.lagmat(endog, maxlag=2, trim='both', original='in')
-        self.ind_all = endog.index[2:]
-        endog = X[:, :2]
-        self.lagged_endog = X[:, 2:]
-        self._start_params = params0
-
-        # Initialize the state space model
-        # Note: because your state process is nonstationary,
-        # you can't use stationary initialization
-        super().__init__(endog, k_states=3, k_posdef=1,
-                         initialization='diffuse')
-
-        # Setup the fixed components of the state space representation
-        self['design'] = [[1., 1., 1.],
-                          [1., 0, 0]]
-        self['transition'] = [[1., 0, 0],
-                              [1., 0, 0],
-                              [0,  1.,0]]
-        self['selection'] = [[1],
-                             [0],
-                             [0]]
-
-    # For the parameter estimation part, it is
-    # helpful to use parameter transformations to
-    # keep the parameters in the valid domain. Here
-    # I assumed that you wanted phi and psi to be
-    # between (-1, 1).
-        
-    def transform_params(self, params):
-        params = params.copy()
-        for i in [0,2]:
-            params[i:i + 2] = tools.constrain_stationary_univariate(params[i:i + 2])
-        params[4:7] = params[4:7]**2
-        return params
-    
-    def untransform_params(self, params):
-        params = params.copy()
-        for i in [0,2]:
-            params[i:i + 2] = tools.unconstrain_stationary_univariate(params[i:i + 2])
-        params[4:7] = params[4:7]**0.5
-        return params
-
-    # Describe how parameters enter the model
-    def update(self, params, **kwargs):
-        params = super().update(params, **kwargs)
-
-        # Here is where we're putting the lagged endog, multiplied
-        # by phi and psi into the intercept term
-        # self['obs_intercept'] = self.lagged_endog.T * params[:2, None]
-        intercept_p = []
-        intercept_n = []
-        for param in params[:lag]:
-            intercept_p.extend([param, 0])
-        for param in params[lag:2*lag]:
-            intercept_n.extend([0, param])
-
-        self['obs_intercept'] = np.array([intercept_p, intercept_n]) @ self.lagged_endog.T+ np.tile([[params[7]],[params[8]]],self.lagged_endog.shape[0])
-        self['state_intercept'] = np.tile([[params[9]],[0],[0]],self.lagged_endog.shape[0])
-        self['state_intercept'] = self['state_intercept'] + np.array([[params[10], 0, 0], [0, 0, 0], [0,0,0]]) @ np.tile((self.ind_all.month == 3) & (self.ind_all.year == 2020), 3).reshape(3, -1).astype(int)
-        self['design', 0, 1] = -params[0]
-        self['design', 0, 2] = -params[1]
-        self['design', 1, 0] = 1 - params[2] - params[3]
-        self['state_cov', 0, 0] = params[4]
-        self['obs_cov'] = np.diag(params[5:7])
-
-        
-class SSM_vec(sm.tsa.statespace.MLEModel):
-    
-
-    # If you use _param_names and _start_params then the model
-    # will automatically pick them up
-    _param_names = ['psi', 'phi', 'sigma2_r', 'sigma2_e', 'sigma2_w', 'obs_cov',
-                       "intercept_obs_1", "intercept_obs_2", "intercept_state_1"]
-    _start_params = [0.5*np.eye(137), 0.5*np.eye(137), 0.1*np.eye(), 1, 1, 0, 0, 0, 0]
-
-    def __init__(self, endog):
-        # Extract lagged endog
-        X = sm.tsa.lagmat(endog, maxlag=1, trim='both', original='in')
-        self.ind_all = endog.index[1:]
-        endog = X[:, :2]
-        self.lagged_endog = X[:, 2:]
-
-        # Initialize the state space model
-        # Note: because your state process is nonstationary,
-        # you can't use stationary initialization
-        super().__init__(endog, k_states=2, k_posdef=1,
-                         initialization='diffuse')
-
-        # Setup the fixed components of the state space representation
-        self['design'] = [[1., 1.],
-                          [1., 0]]
-        self['transition'] = [[1., 0],
-                              [1., 0]]
-        self['selection'] = [[1],
-                             [0]]
-
-    # For the parameter estimation part, it is
-    # helpful to use parameter transformations to
-    # keep the parameters in the valid domain. Here
-    # I assumed that you wanted phi and psi to be
-    # between (-1, 1).
-        
-    def transform_params(self, params):
-        params = params.copy()
-        for i in range(2):
-            params[i:i + 1] = tools.constrain_stationary_univariate(params[i:i + 1])
-        params[2:] = params[2:]**2
-        return params
-    
-    def untransform_params(self, params):
-        params = params.copy()
-        for i in range(2):
-            params[i:i + 1] = tools.unconstrain_stationary_univariate(params[i:i + 1])
-        params[2:] = params[2:]**0.5
-        return params
-
-    # Describe how parameters enter the model
-    def update(self, params, **kwargs):
-        params = super().update(params, **kwargs)
-
-        # Here is where we're putting the lagged endog, multiplied
-        # by phi and psi into the intercept term
-        # self['obs_intercept'] = self.lagged_endog.T * params[:2, None]
-        self['obs_intercept'] = self.lagged_endog.T * params[:2, None]+ np.tile([[params[6]],[params[7]]],self.lagged_endog.shape[0])
-        self['state_intercept'] = np.tile([[params[8]],[0]],self.lagged_endog.shape[0])
-        # self['state_intercept'] = self['state_intercept'] + np.matrix([[params[8],0],[0,0]]) @ np.tile((self.ind_all.month==3) & (self.ind_all.year==2020),2).reshape(2,-1).astype(int)
-        self['design', 0, 1] = -params[0]
-        self['design', 1, 0] = 1 - params[1]
-        self['state_cov', 0, 0] = params[2]
-        self['obs_cov'] = np.matrix([[params[3],params[5]],[params[5],params[4]]])
+#         # Here is where we're putting the lagged endog, multiplied
+#         # by phi and psi into the intercept term
+#         # self['obs_intercept'] = self.lagged_endog.T * params[:2, None]
+#         self['obs_intercept'] = self.lagged_endog.T * params[:2, None]+ np.tile([[params[6]],[params[7]]],self.lagged_endog.shape[0])
+#         self['state_intercept'] = np.tile([[params[8]],[0]],self.lagged_endog.shape[0])
+#         # self['state_intercept'] = self['state_intercept'] + np.matrix([[params[8],0],[0,0]]) @ np.tile((self.ind_all.month==3) & (self.ind_all.year==2020),2).reshape(2,-1).astype(int)
+#         self['design', 0, 1] = -params[0]
+#         self['design', 1, 0] = 1 - params[1]
+#         self['state_cov', 0, 0] = params[2]
+#         self['obs_cov'] = np.matrix([[params[3],params[5]],[params[5],params[4]]])
 
 
 class SSM_anylag(sm.tsa.statespace.MLEModel):
@@ -240,8 +96,8 @@ class SSM_anylag(sm.tsa.statespace.MLEModel):
         self.lagged_endog = X[:, 2:]
         self._start_params = params0
         self.lag = lag
-        self._param_names = [f'psi_{i}' for i in range(1,lag+1)] + [f'phi_{i}' for i in range(1,lag+1)] + ['sigma2_r', 'sigma2_e', 'sigma2_w',
-                    "intercept_obs_1", "intercept_obs_2", "intercept_state_1", "covid"]
+        self._param_names = [f'psi_{i}' for i in range(1,lag+1)] + [f'phi_{i}' for i in range(1,lag+1)] + ['sigma2_r', 'sigma_e', 'sigma_w',
+                    "intercept_obs_1", "intercept_obs_2", "intercept_state_1", "obs_err_cov_lower", "covid"]
         
         # Initialize the state space model
         # Note: because your state process is nonstationary,
@@ -271,14 +127,14 @@ class SSM_anylag(sm.tsa.statespace.MLEModel):
         params = params.copy()
         for i in [0, lag]:
             params[i:i + lag] = tools.constrain_stationary_univariate(params[i:i + lag])
-        params[(2*lag):(2*lag+3)] = params[(2*lag):(2*lag+3)]**2
+        params[(2*lag)] = params[(2*lag)]**2
         return params
     
     def untransform_params(self, params):
         params = params.copy()
         for i in [0, lag]:
             params[i:i + lag] = tools.unconstrain_stationary_univariate(params[i:i + lag])
-        params[(2*lag):(2*lag+3)] = params[(2*lag):(2*lag+3)]**0.5
+        params[(2*lag)] = params[(2*lag)]**0.5
         return params
 
     # Describe how parameters enter the model
@@ -297,7 +153,7 @@ class SSM_anylag(sm.tsa.statespace.MLEModel):
 
         self['obs_intercept'] = np.array([intercept_p, intercept_n]) @ self.lagged_endog.T+ np.tile([[params[2*lag+3]],[params[2*lag+4]]],self.lagged_endog.shape[0])
         self['state_intercept'] = np.tile(np.vstack(([params[2*lag+5]], np.zeros((lag,1)))), self.lagged_endog.shape[0])
-        self['state_intercept'] = self['state_intercept'] + np.vstack((np.hstack(([[params[2*lag+6]]], np.zeros((1,lag)))), np.zeros((lag,lag+1)))) @ np.tile((self.ind_all.month == 3) & (self.ind_all.year == 2020), lag+1).reshape(lag+1, -1).astype(int)
+        self['state_intercept'] = self['state_intercept'] + np.vstack((np.hstack(([[params[2*lag+7]]], np.zeros((1,lag)))), np.zeros((lag,lag+1)))) @ np.tile((self.ind_all.month == 3) & (self.ind_all.year == 2020), lag+1).reshape(lag+1, -1).astype(int)
         for i in range(1, lag+1):
             self['design', 0, i] = -params[i-1]
         params_acc = 0
@@ -305,7 +161,94 @@ class SSM_anylag(sm.tsa.statespace.MLEModel):
             params_acc += params[i]
         self['design', 1, 0]  = 1 - params_acc
         self['state_cov', 0, 0] = params[2*lag]
-        self['obs_cov'] = np.diag([params[2*lag+1],params[2*lag+2]])
+        self['obs_cov'] = np.array([[params[2*lag+1],params[2*lag+6]],[params[2*lag+6],params[2*lag+2]]])
+        lower = np.array([[params[2*lag+1], 0], [params[2*lag+6], params[2*lag+2]]])
+        self['obs_cov'] = lower@(lower.T)
+
+
+class SSM_anylag_0_cov(sm.tsa.statespace.MLEModel):
+
+    def __init__(self, endog, params0, lag):
+        # Extract lagged endog
+        X = sm.tsa.lagmat(endog, maxlag=lag, trim='both', original='in')
+        self.ind_all = endog.index[lag:]
+        endog = X[:, :2]
+        self.lagged_endog = X[:, 2:]
+        self._start_params = params0
+        self.lag = lag
+        self._param_names = [f'psi_{i}' for i in range(1, lag+1)] + [f'phi_{i}' for i in range(1, lag+1)] + ['sigma2_r', 'sigma2_e', 'sigma2_w',
+                                                                                                             "intercept_obs_1", "intercept_obs_2", "intercept_state_1", "covid"]
+
+        # Initialize the state space model
+        # Note: because your state process is nonstationary,
+        # you can't use stationary initialization
+        super().__init__(endog, k_states=lag+1, k_posdef=1,
+                         initialization='diffuse')
+
+        # Setup the fixed components of the state space representation
+        design = np.vstack((np.ones((1, lag+1)), np.zeros((1, lag+1))))
+        design[1, 0] = 1
+        self['design'] = design
+        transition = np.zeros((1, lag+1))
+        transition[0, 0] = 1
+        transition = np.vstack(
+            (transition, np.hstack((np.eye(lag), np.zeros((lag, 1))))))
+        self['transition'] = transition
+        selection = np.zeros((lag+1, 1))
+        selection[0, 0] = 1
+        self['selection'] = selection
+
+    # For the parameter estimation part, it is
+    # helpful to use parameter transformations to
+    # keep the parameters in the valid domain. Here
+    # I assumed that you wanted phi and psi to be
+    # between (-1, 1).
+
+    def transform_params(self, params):
+        params = params.copy()
+        for i in [0, lag]:
+            params[i:i +
+                   lag] = tools.constrain_stationary_univariate(params[i:i + lag])
+        params[(2*lag):(2*lag+3)] = params[(2*lag):(2*lag+3)]**2
+        return params
+
+    def untransform_params(self, params):
+        params = params.copy()
+        for i in [0, lag]:
+            params[i:i +
+                   lag] = tools.unconstrain_stationary_univariate(params[i:i + lag])
+        params[(2*lag):(2*lag+3)] = params[(2*lag):(2*lag+3)]**0.5
+        return params
+
+    # Describe how parameters enter the model
+    def update(self, params, **kwargs):
+        params = super().update(params, **kwargs)
+
+        # Here is where we're putting the lagged endog, multiplied
+        # by phi and psi into the intercept term
+        # self['obs_intercept'] = self.lagged_endog.T * params[:2, None]
+        intercept_p = []
+        intercept_n = []
+        for param in params[:lag]:
+            intercept_p.extend([param, 0])
+        for param in params[lag:2*lag]:
+            intercept_n.extend([0, param])
+
+        self['obs_intercept'] = np.array([intercept_p, intercept_n]) @ self.lagged_endog.T + np.tile(
+            [[params[2*lag+3]], [params[2*lag+4]]], self.lagged_endog.shape[0])
+        self['state_intercept'] = np.tile(
+            np.vstack(([params[2*lag+5]], np.zeros((lag, 1)))), self.lagged_endog.shape[0])
+        self['state_intercept'] = self['state_intercept'] + np.vstack((np.hstack(([[params[2*lag+6]]], np.zeros((1, lag)))), np.zeros(
+            (lag, lag+1)))) @ np.tile((self.ind_all.month == 3) & (self.ind_all.year == 2020), lag+1).reshape(lag+1, -1).astype(int)
+        for i in range(1, lag+1):
+            self['design', 0, i] = -params[i-1]
+        params_acc = 0
+        for i in range(lag, 2*lag):
+            params_acc += params[i]
+        self['design', 1, 0] = 1 - params_acc
+        self['state_cov', 0, 0] = params[2*lag]
+        self['obs_cov'] = np.array(
+            [[params[2*lag+1], 0], [0, params[2*lag+2]]])
 
 
 def fit_param(df, params0, lag, method="lbfgs",maxit=200):
@@ -359,8 +302,9 @@ for i in range(len(isin_list)):
   df_start['nav'] = df_start['nav'].interpolate(method='linear')
   df_start.dropna(inplace=True)
   
-  price_auto = auto_arima(df_start["price"], start_p=1, start_q=1)
-  nav_auto = auto_arima(df_start["nav"], start_p=1, start_q=1)
+  price_auto = auto_arima(df_start["price"], start_p=1, start_q=1, max_p=10, max_q=10)
+  nav_auto = auto_arima(df_start["nav"], start_p=1,
+                        start_q=1, max_p=10, max_q=10)
   lag = max(len(price_auto.arparams()), len(price_auto.maparams()), len(nav_auto.arparams()), len(nav_auto.maparams()), 1)
   print(lag)
 
@@ -377,7 +321,7 @@ for i in range(len(isin_list)):
   with warnings.catch_warnings(record=True) as caught_warnings:
     warnings.filterwarnings("always")
     try:
-        result_param, result_state, result_state_var = fit_param(df_complete, psi_res.arparams.tolist() + phi_res.arparams.tolist() + [0.1, 1, 1, 0, 0, 0, covid_drop], lag=lag)
+        result_param, result_state, result_state_var = fit_param(df_complete, psi_res.arparams.tolist() + phi_res.arparams.tolist() + [0.1, 1, 1, 0, 0, 0, 0, covid_drop], lag=lag)
         if caught_warnings:  # If any warnings were caught
             use_alternative_model = True
     except:
@@ -393,19 +337,17 @@ for i in range(len(isin_list)):
   result_state_df["var"] = result_state_var
   state_list[i] = result_state_df
 
-  
-# non-converge: 9/137, 25/137
 
 tot_res1 = pd.DataFrame(res_list, columns = ['phi', 'psi', 'sigma2_r', 'sigma2_e', 'sigma2_w', "intercept_obs_1",
 "intercept_obs_2", "intercept_state_1", "isin"]).reset_index()
 tot_state1 = pd.concat(state_list,axis=0).reset_index(drop=True)
-tot_state1["date"] = tot_state1["date"].astype(str)
 tot_res.to_csv("ssm_res.csv")
 tot_state.to_csv("ssm_state.csv")
 
 
 
 
-vec form -- better estimation of the mispricing var & cov as we take into account the cross-asset cov
+# vec form -- better estimation of the mispricing var & cov as we take into account the cross-asset cov
 
-lag flexible form -- check if the autocorr problem can be solved by higher lags
+# lag flexible form -- check if the autocorr problem can be solved by higher lags: no. it's not about lags,
+# potentially related to the wrongly estimated cov -- think about adding GARCH errors.
