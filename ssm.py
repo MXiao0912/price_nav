@@ -351,3 +351,20 @@ tot_state.to_csv("ssm_state.csv")
 
 # lag flexible form -- check if the autocorr problem can be solved by higher lags: no. it's not about lags,
 # potentially related to the wrongly estimated cov -- think about adding GARCH errors.
+
+
+df = px_nav.copy()
+df = df.set_index(["isin","date"], drop=True)
+df = df.unstack(level=0)
+df.index = pd.to_datetime(df.index)
+cal = UnitedKingdom()
+df_complete = pd.DataFrame(index=[d for d in pd.bdate_range(start="01/03/2018", end="10/22/2022") if cal.is_working_day(d)])
+df_complete = df_complete.join(df)
+df_complete.columns = pd.MultiIndex.from_tuples(df_complete.columns)
+check = px_nav.groupby('isin')["date"].agg(["min","max"])
+isin_sel = check.loc[(check["min"]=="2018-01-03")&(check["max"]>="2022-10-21"),].index
+df_sel = df_complete.loc[:,idx[:,isin_sel]]
+df_sel = df_sel.fillna(method="ffill")
+df_sel.dropna(inplace=True)
+
+
