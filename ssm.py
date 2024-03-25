@@ -1,8 +1,8 @@
 import numpy as np
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
-import pandas as pd
 import plotly.express as px
+import pandas as pd
 from statsmodels.tsa.statespace import tools
 import warnings
 from sklearn.exceptions import ConvergenceWarning
@@ -15,8 +15,10 @@ from scipy.linalg import block_diag
 from datetime import date
 import random
 import re
+import os
 idx = pd.IndexSlice
 cal = UnitedKingdom()
+os.chdir("/home/azureuser/price_nav")
 
 px_nav = pd.read_csv("px_nav.csv")
 px_nav = px_nav.sort_values("date")
@@ -38,7 +40,7 @@ class SSM_anylag(sm.tsa.statespace.MLEModel):
         self._start_params = params0
         self.lag = lag
         self._param_names = [f'psi_{i}' for i in range(1,lag+1)] + [f'phi_{i}' for i in range(1,lag+1)] + ['sigma2_r', 'sigma_e', 'sigma_w',
-                    "intercept_obs_1", "intercept_obs_2", "intercept_state_1", "obs_err_cov_lower"]
+                    "obs_err_cov_lower"]
         
         # Initialize the state space model
         # Note: because your state process is nonstationary,
@@ -92,8 +94,8 @@ class SSM_anylag(sm.tsa.statespace.MLEModel):
         for param in params[lag:2*lag]:
             intercept_n.extend([0, param])
 
-        self['obs_intercept'] = np.array([intercept_p, intercept_n]) @ self.lagged_endog.T+ np.tile([[params[2*lag+3]],[params[2*lag+4]]],self.lagged_endog.shape[0])
-        self['state_intercept'] = np.tile(np.vstack(([params[2*lag+5]], np.zeros((lag,1)))), self.lagged_endog.shape[0])
+        self['obs_intercept'] = np.array([intercept_p, intercept_n]) @ self.lagged_endog.T
+        self['state_intercept'] = np.tile(np.vstack((0, np.zeros((lag,1)))), self.lagged_endog.shape[0])
         # self['state_intercept'] = self['state_intercept'] + np.vstack((np.hstack(([[params[2*lag+7]]], np.zeros((1,lag)))), np.zeros((lag,lag+1)))) @ np.tile((self.ind_all.month == 3) & (self.ind_all.year == 2020), lag+1).reshape(lag+1, -1).astype(int)
         for i in range(1, lag+1):
             self['design', 0, i] = -params[i-1]
@@ -102,15 +104,14 @@ class SSM_anylag(sm.tsa.statespace.MLEModel):
             params_acc += params[i]
         self['design', 1, 0]  = 1 - params_acc
         self['state_cov', 0, 0] = params[2*lag]
-        self['obs_cov'] = np.array([[params[2*lag+1],params[2*lag+6]],[params[2*lag+6],params[2*lag+2]]])
-        lower = np.array([[params[2*lag+1], 0], [params[2*lag+6], params[2*lag+2]]])
+        lower = np.array([[params[2*lag+1], 0], [params[2*lag+3], params[2*lag+2]]])
         self['obs_cov'] = lower@(lower.T)
 
 
 
 def fit_param(df, params0, lag, method="lbfgs",maxit=200):
   mod = SSM_anylag(df,params0,lag)
-  res = mod.fit(disp=False, method=method, maxiter=maxit)
+  res = mod.fit(disp=False,method=method, maxiter=maxit)
   result_param = res.params
   result_state = res.smoothed_state[0,:]
   result_state_var = res.smoothed_state_cov[0,0]
@@ -130,8 +131,8 @@ px_nav = pd.DataFrame(px_nav)
 px_nav["date"] = px_nav["date"].astype(str)
 
 
-lag = 1
 for i in range(len(isin_list)):
+# for i in range(5):
     print(str(i)+isin_list[i])
     # i = 97
     df = px_nav.loc[px_nav["isin"]==isin_list[i],["price","nav"]]
@@ -167,13 +168,14 @@ for i in range(len(isin_list)):
     #                     start_q=1, max_p=10, max_q=10)
     # lag = max(len(price_auto.arparams()), len(price_auto.maparams()), len(nav_auto.arparams()), len(nav_auto.maparams()), 1)
     # print(lag)
+    lag = 1
 
     warnings.filterwarnings("ignore")
     psi_res = ARIMA(df_start["price"], order=(lag,0,lag)).fit()
     phi_res = ARIMA(df_start["nav"], order=(lag,0,1)).fit()
     warnings.filterwarnings("default")
 
-    result_param, result_state, result_state_var = fit_param(df_complete, psi_res.arparams.tolist() + phi_res.arparams.tolist() + [0.1, 1, 1, 0, 0, 0, 0], lag=lag)
+    # result_param, result_state, result_state_var = fit_param(df_complete, psi_res.arparams.tolist() + phi_res.arparams.tolist() + [0.1, 1, 1, 0, 0, 0, 0], lag=lag)
 
     print("fit1 start")
     use_alternative_model = False
@@ -186,9 +188,9 @@ for i in range(len(isin_list)):
                 use_alternative_model = True
         except:
             use_alternative_model = True
-    if use_alternative_model:
-            print("fit2 start")
-            result_param, result_state, result_state_var = fit_param(df_complete, result_param, method="nm", maxit=3000, lag=lag)
+    # if use_alternative_model:
+    print("fit2 start")
+    result_param, result_state, result_state_var = fit_param(df_complete, result_param, method="nm", maxit=3000, lag=lag)
 
     res_list[i] = np.append(result_param, isin_list[i])
     result_state_df = df_complete.iloc[:-lag,].copy()
@@ -205,21 +207,6 @@ for i in range(len(isin_list)):
 # tot_state.to_csv("ssm_state.csv")
 
 
-# df = px_nav.copy()
-# df = df.set_index(["isin","date"], drop=True)
-# df = df.unstack(level=0)
-# df.index = pd.to_datetime(df.index)
-# cal = UnitedKingdom()
-# df_complete = pd.DataFrame(index=[d for d in pd.bdate_range(start="01/03/2018", end="10/22/2022") if cal.is_working_day(d)])
-# df_complete = df_complete.join(df)
-# df_complete.columns = pd.MultiIndex.from_tuples(df_complete.columns)
-# check = px_nav.groupby('isin')["date"].agg(["min","max"])
-# isin_sel = check.loc[(check["min"]=="2018-01-03")&(check["max"]>="2022-10-21"),].index
-# df_sel = df_complete.loc[:,idx[:,isin_sel]]
-# df_sel = df_sel.fillna(method="ffill")
-# df_sel.dropna(inplace=True)
-
-
 
 # for i in range(110,len(isin_list)):
 #     df = px_nav.loc[px_nav["isin"]==isin_list[i],["price","nav"]]
@@ -234,6 +221,19 @@ for i in range(len(isin_list)):
 #     plt.savefig("./px_nav_plot/" + str(i)+isin_list[i] + ".jpg")
     
 
+isin_info = pd.read_excel("AUG_INCEPT_MKTCAP.xlsx")
+# for i in range(len(isin_list)):
 for i in range(len(isin_list)):
-    state_list[i].loc["2020-01-01":"2020-06-01",["price","nav","state"]].plot()
+    isin_ = state_list[i].loc[state_list[i].index[0], "isin"]
+    name_ = isin_info.loc[isin_info["isin"]==isin_, "Name"]
+    if len(name_):
+        state_list[i].loc["2020-01-01":"2020-06-01",["price","nav","state"]].plot(title=name_.iloc[0])
+        plt.savefig("./px_nav_fitted_plot/" + str(i)+isin_list[i] + ".jpg")
+
+
+for i in range(len(isin_list)):
+    state_list[i].loc[:,["price","nav","state"]].plot()
     plt.savefig("./px_nav_fitted_plot/" + str(i)+isin_list[i] + ".jpg")
+
+tot_res = pd.DataFrame(res_list[:5], columns = ['phi', 'psi', 'sigma2_r', 'sigma2_e', 'sigma2_w', "intercept_obs_1",
+"intercept_obs_2", "intercept_state_1", "obs_err_cov_lower", "isin"]).reset_index()
